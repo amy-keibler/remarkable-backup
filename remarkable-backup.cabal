@@ -1,0 +1,54 @@
+cabal-version:      2.4
+name:               remarkable-backup
+version:            0.1.0.0
+
+synopsis: Back up the Remarkable 2 over SSH and install custom templates
+-- A longer description of the package.
+-- description:
+-- category:
+
+bug-reports: https://github.com/amy-keibler/remarkable-backup
+
+author: Amy Keibler
+maintainer: amelia.keibler@gmail.com
+copyright: (c) 2021 Amy Keibler
+
+license-files: LICENSE
+extra-source-files: CHANGELOG.md
+
+library remarkable-backup-lib
+    exposed-modules:    RemarkableBackup
+    build-depends:      base ^>=4.14.1.0
+                      , relude
+                      , aeson
+    hs-source-dirs:     src
+    default-language:   Haskell2010
+    default-extensions: NoImplicitPrelude
+                      , OverloadedStrings
+
+test-suite remarkable-backup-tests
+    type:               exitcode-stdio-1.0
+    main-is:            Spec.hs
+    other-modules:      RemarkableBackupSpec
+    build-depends:      base ^>=4.14.1.0
+                      , remarkable-backup-lib
+                      , hspec
+                      , relude
+                      , aeson
+                      , raw-strings-qq
+    hs-source-dirs:     test
+    default-language:   Haskell2010
+    default-extensions: NoImplicitPrelude
+                      , OverloadedStrings
+
+
+executable remarkable-backup
+    main-is:            Main.hs
+    build-depends:      base ^>=4.14.1.0
+                      , remarkable-backup-lib
+                      , optparse-applicative
+                      , relude
+    hs-source-dirs:     app
+    default-language:   Haskell2010
+    default-extensions: NoImplicitPrelude
+                      , OverloadedStrings
