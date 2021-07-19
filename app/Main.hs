@@ -1,8 +1,10 @@
 module Main where
 
 import Relude
-import RemarkableBackup
 import qualified Data.Text.IO as TIO
 
+import RemarkableBackup
+import Config
+
 main :: IO ()
-main = putStrLn "Hello, TODO!"
+main = parseOptions >>= print
