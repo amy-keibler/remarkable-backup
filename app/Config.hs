@@ -7,9 +7,12 @@ module Config
 import Options.Applicative
 import Relude
 import System.Environment.XDG.BaseDir
+import System.Directory
 import System.IO (hPutStrLn, stderr)
+import qualified Toml
+import Toml.Codec hiding (first)
 
-import RemarkableBackup (Template)
+import RemarkableBackup (Template (..), IconCode(..))
 
 data Options = Options
   { oRemarkableSshHost         :: Text
@@ -74,7 +77,28 @@ defaultPartialOptions = mempty
 partialOptionsConfigFile :: IO (Either String PartialOptions)
 partialOptionsConfigFile = do
   configDir <- getUserConfigDir "remarkable-backup"
-  pure $ Left "TODO: Implement toml parsing"
+  let configFile = configDir <> "/config.toml"
+  exists <- doesFileExist configFile
+  if exists
+    then do
+      decodedFile <- decodeFileEither partialOptionsCodec configFile
+      pure $ first (\e -> mconcat $ intersperse "\n" $ show <$> e) decodedFile
+    else
+      pure $ Right mempty
+
+partialOptionsCodec :: TomlCodec PartialOptions
+partialOptionsCodec = PartialOptions
+  <$> Toml.last Toml.text "ssh_host" .= poRemarkableSshHost
+  <*> Toml.last Toml.text "backup_folder" .= poHostBackupFolder
+  <*> Toml.last Toml.text "additional_templates_folder" .= poAdditionalTemplatesFolder
+  <*> Toml.last (Toml.list  templatesCodec) "additional_templates" .= poAdditionalTemplates
+
+templatesCodec :: TomlCodec Template
+templatesCodec = Template
+  <$> Toml.text "name" .= name
+  <*> Toml.text "file_name" .= filename
+  <*> Toml.diwrap (Toml.text "icon_code") .= iconCode
+  <*> Toml.arrayOf _Text "categories" .= categories
 
 -- From CLI
 

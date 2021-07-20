@@ -47,6 +47,7 @@ executable remarkable-backup
     build-depends:      base ^>=4.14.1.0
                       , remarkable-backup-lib
                       , relude
+                      , directory
                       , optparse-applicative
                       , tomland
                       , xdg-basedir
