@@ -50,6 +50,7 @@ executable remarkable-backup
                       , directory
                       , optparse-applicative
                       , tomland
+                      , validation
                       , xdg-basedir
     hs-source-dirs:     app
     default-language:   Haskell2010

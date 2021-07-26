@@ -1,34 +1,61 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE InstanceSigs    #-}
 module Config
   ( Options
   , parseOptions
   ) where
 
-import Options.Applicative
+import Data.Validation
+import Options.Applicative hiding (Failure, Success)
 import Relude
 import System.Environment.XDG.BaseDir
 import System.Directory
 import System.IO (hPutStrLn, stderr)
 import qualified Toml
 import Toml.Codec hiding (first)
+import qualified Text.Show
+import Data.Text as T hiding (intersperse)
 
 import RemarkableBackup (Template (..), IconCode(..))
 
 data Options = Options
-  { oRemarkableSshHost         :: Text
-  , oHostBackupFolder          :: Text
-  , oAdditionalTemplatesFolder :: Text
+  { oRemarkableSshHost :: Text
+  , oHostBackupFolder  :: Text
+  , oTemplateOptions   :: Maybe TemplateOptions
+  } deriving (Show)
+
+data TemplateOptions = TemplateOptions
+  { oAdditionalTemplatesFolder :: Text
   , oAdditionalTemplates       :: [Template]
   } deriving (Show)
 
-parseOptions :: IO Options
+data OptionsError
+  = MissingSshHost
+  | MissingBackupFolder
+  | InvalidBackupFolder Text
+  | MissingTemplatesFolder
+  | InvalidTemplatesFolder Text
+  | InvalidTomlConfigFile Text
+
+instance Show OptionsError where
+  show :: OptionsError -> String
+  show MissingSshHost = "Missing SSH Host"
+  show MissingBackupFolder = "Missing Backup Folder"
+  show (InvalidBackupFolder f) = "Backup folder " <> T.unpack f <> " is invalid"
+  show MissingTemplatesFolder = "Missing templates folder when templates are configured"
+  show (InvalidTemplatesFolder f) = "Templates folder " <> T.unpack f <> " is invalid"
+  show (InvalidTomlConfigFile f) = "Toml configuration file " <> T.unpack f <> " is invalid"
+
+type OptionsValidation a = Validation [OptionsError] a
+
+parseOptions :: IO (OptionsValidation Options)
 parseOptions = do
   cmdLineOptions <- execParser $ info partialOptionsParser mempty
   configOptions <-  partialOptionsConfigFile >>= logErr
   let combinedOptions =  defaultPartialOptions
                       <> configOptions
                       <> cmdLineOptions
-  either die return $ mkOptions combinedOptions
+  pure $ mkOptions combinedOptions
 
 logErr :: (Monoid a) => Either String a -> IO a
 logErr (Left e) = do
@@ -37,9 +64,13 @@ logErr (Left e) = do
 logErr (Right a) = pure a
 
 data PartialOptions = PartialOptions
-  { poRemarkableSshHost         :: Last Text
-  , poHostBackupFolder          :: Last Text
-  , poAdditionalTemplatesFolder :: Last Text
+  { poRemarkableSshHost :: Last Text
+  , poHostBackupFolder  :: Last Text
+  , poTemplateOptions    :: Last (Maybe PartialTemplateOptions)
+  } deriving (Show)
+
+data PartialTemplateOptions = PartialTemplateOptions
+  { poAdditionalTemplatesFolder :: Last Text
   , poAdditionalTemplates       :: Last [Template]
   } deriving (Show)
 
@@ -47,30 +78,43 @@ instance Semigroup PartialOptions where
   x <> y = PartialOptions
     { poRemarkableSshHost = poRemarkableSshHost x <> poRemarkableSshHost y
     , poHostBackupFolder = poHostBackupFolder x <> poHostBackupFolder y
-    , poAdditionalTemplatesFolder = poAdditionalTemplatesFolder x <> poAdditionalTemplatesFolder y
-    , poAdditionalTemplates = poAdditionalTemplates x <> poAdditionalTemplates y
+    , poTemplateOptions = poTemplateOptions x <> poTemplateOptions y
     }
 
 instance Monoid PartialOptions where
-  mempty = PartialOptions mempty mempty mempty mempty
+  mempty = PartialOptions mempty mempty mempty
 
-lastToEither :: String -> Last a -> Either String a
-lastToEither errMsg (Last x) = maybe (Left errMsg) Right x
+instance Semigroup PartialTemplateOptions where
+  x <> y = PartialTemplateOptions
+    { poAdditionalTemplatesFolder = poAdditionalTemplatesFolder x <> poAdditionalTemplatesFolder y
+    , poAdditionalTemplates = poAdditionalTemplates x <> poAdditionalTemplates y
+    }
 
-mkOptions :: PartialOptions -> Either String Options
-mkOptions PartialOptions {..} = do
-  oRemarkableSshHost <- lastToEither "Missing ssh host" poRemarkableSshHost
-  oHostBackupFolder <- lastToEither "Missing backup folder" poHostBackupFolder
-  oAdditionalTemplatesFolder <- lastToEither "Missing additional templates folder" poAdditionalTemplatesFolder
-  oAdditionalTemplates <- lastToEither "Missing additional templates" poAdditionalTemplates
-  return Options {..}
+instance Monoid PartialTemplateOptions where
+  mempty = PartialTemplateOptions mempty mempty
+
+lastToValidation :: OptionsError -> Last a -> OptionsValidation a
+lastToValidation errMsg (Last x) = maybe (Failure [errMsg]) Success x
+
+lastToEmpty :: (Monoid a) => Last a -> a
+lastToEmpty (Last (Just x)) = x
+lastToEmpty (Last Nothing) = mempty
+
+mkOptions :: PartialOptions -> OptionsValidation Options
+mkOptions PartialOptions {..} = Options
+  <$> lastToValidation MissingSshHost poRemarkableSshHost
+  <*> lastToValidation MissingBackupFolder poHostBackupFolder
+  <*> (traverse mkTemplateOptions $ lastToEmpty poTemplateOptions)
+
+mkTemplateOptions :: PartialTemplateOptions -> OptionsValidation TemplateOptions
+mkTemplateOptions PartialTemplateOptions {..} = TemplateOptions
+  <$> lastToValidation MissingTemplatesFolder poAdditionalTemplatesFolder
+  <*> pure (lastToEmpty poAdditionalTemplates)
 
 -- Default
 
 defaultPartialOptions :: PartialOptions
 defaultPartialOptions = mempty
-  { poAdditionalTemplates = pure []
-  }
 
 -- Config File
 
@@ -90,7 +134,11 @@ partialOptionsCodec :: TomlCodec PartialOptions
 partialOptionsCodec = PartialOptions
   <$> Toml.last Toml.text "ssh_host" .= poRemarkableSshHost
   <*> Toml.last Toml.text "backup_folder" .= poHostBackupFolder
-  <*> Toml.last Toml.text "additional_templates_folder" .= poAdditionalTemplatesFolder
+  <*> Toml.last (Toml.dioptional . Toml.table templatesSectionCodec) "templates" .= poTemplateOptions
+
+templatesSectionCodec :: TomlCodec PartialTemplateOptions
+templatesSectionCodec = PartialTemplateOptions
+  <$> Toml.last Toml.text "templates_folder" .= poAdditionalTemplatesFolder
   <*> Toml.last (Toml.list  templatesCodec) "additional_templates" .= poAdditionalTemplates
 
 templatesCodec :: TomlCodec Template
@@ -109,5 +157,4 @@ partialOptionsParser :: Parser PartialOptions
 partialOptionsParser = PartialOptions
   <$> lastOption (option str (long "ssh-host"))
   <*> lastOption (option str (long "backup-folder"))
-  <*> lastOption (option str (long "templates-folder"))
   <*> pure mempty
